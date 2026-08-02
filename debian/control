@@ -1,0 +1,42 @@
+Source: deepin-video-wallpaper
+Section: utils
+Priority: optional
+Maintainer: cniu6 <cniu6@users.noreply.github.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ cmake,
+ pkg-config,
+ qt6-base-dev,
+ libdtk6core-dev,
+ libavformat-dev,
+ libavcodec-dev,
+ libavutil-dev,
+ libswscale-dev,
+ dde-file-manager-dev | libdde-file-manager
+Standards-Version: 4.6.2
+Homepage: https://github.com/cniu6/deepin_video_wallpaper
+Vcs-Git: https://github.com/cniu6/deepin_video_wallpaper.git
+Vcs-Browser: https://github.com/cniu6/deepin_video_wallpaper
+Rules-Requires-Root: no
+
+Package: deepin-video-wallpaper
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ libdde-file-manager,
+ libavcodec60 | libavcodec,
+ libavformat60 | libavformat,
+ libavutil58 | libavutil,
+ libswscale7 | libswscale,
+ libqt6core6 | libqt6core6t64,
+ libqt6gui6 | libqt6gui6t64,
+ libqt6widgets6 | libqt6widgets6t64,
+ libqt6dbus6 | libqt6dbus6t64,
+ libdtk6core
+Description: Deepin 动态视频壁纸插件
+ 作为 dde-shell 桌面 edge 插件运行，支持多屏、NVIDIA CUDA / VAAPI 硬解，
+ 以及共享解码自绘。右键桌面可打开设置。
+ .
+ 安装后重启桌面服务或注销登录即可生效；卸载：
+  sudo apt remove deepin-video-wallpaper

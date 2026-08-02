@@ -1,0 +1,8 @@
+deepin-video-wallpaper (1.0.0-1) unstable; urgency=medium
+
+  * 初始打包：Deepin 25 桌面动态视频壁纸插件
+  * 软路径共享解码自绘（FFmpeg + CUDA/VAAPI）
+  * 多屏独立视频、中文设置界面
+  * 支持 apt 安装/卸载
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 06:00:00 +0800

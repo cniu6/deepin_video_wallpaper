@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+
+# 卸载前先停插件，避免 so 被占用
+stop_desktop() {
+    for uid in $(ls /run/user 2>/dev/null || true); do
+        [ -S "/run/user/$uid/bus" ] || continue
+        user=$(getent passwd "$uid" | cut -d: -f1)
+        [ -n "$user" ] || continue
+        su -s /bin/sh -c \
+            "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
+             systemctl --user stop 'dde-shell-plugin@org.deepin.ds.desktop.service' 2>/dev/null" \
+            "$user" || true
+    done
+}
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        stop_desktop || true
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

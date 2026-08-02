@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+# 精简 debhelper 构建
+
+export DH_VERBOSE = 1
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DPLUGIN_INSTALL_DIR=lib/$(DEB_HOST_MULTIARCH)/dde-file-manager/plugins/desktop-edge
+
+# 插件 .so 不需要 ldconfig 的 so 名链接折腾；跳过无用的 strip 警告也没关系
+override_dh_shlibdeps:
+	dh_shlibdeps -- -xlibdde-file-manager || dh_shlibdeps

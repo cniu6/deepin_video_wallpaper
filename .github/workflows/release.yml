@@ -1,0 +1,112 @@
+# 打 tag 或手动触发 → 编译 deb → 上传到 GitHub Release
+name: Build & Release deb
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（无 v 前缀，如 1.0.0）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    # Deepin 25 依赖只能在本机/自托管跑；若仓库配置了 self-hosted 标签会优先用
+    # 没有 self-hosted 时退回 ubuntu + 尽力装 deepin 源（可能失败，见 README）
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-22.04' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.version }}" ]]; then
+            V="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            V="${GITHUB_REF#refs/tags/v}"
+          else
+            V="$(dpkg-parsechangelog -l debian/changelog -S Version 2>/dev/null | cut -d- -f1 || echo 1.0.0)"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          # 同步 changelog 版本（native 包）
+          if command -v dch >/dev/null 2>&1; then
+            true
+          fi
+          # 给 build-deb 用
+          echo "VERSION=${V}-1" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies (Deepin / Debian)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v apt-get >/dev/null; then
+            sudo apt-get update -y || true
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              build-essential cmake pkg-config debhelper dpkg-dev fakeroot \
+              qt6-base-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
+              || true
+            # Deepin 特有
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              libdtk6core-dev dde-file-manager-dev libdde-file-manager \
+              || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              libdtk6core-dev libdde-file-manager \
+              || true
+          fi
+          # 检查关键头/库是否存在
+          if ! ldconfig -p | grep -q dfm6-base; then
+            echo "::warning::本机/Runner 缺少 libdfm6-base。请用 Deepin 25 自托管 Runner，或在本机 scripts/build-deb.sh 后上传。"
+            # 不直接 fail：留给 build 步骤报错更清晰
+          fi
+
+      - name: Build deb
+        shell: bash
+        run: |
+          chmod +x scripts/build-deb.sh
+          ./scripts/build-deb.sh
+          ls -la dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepin-video-wallpaper-deb
+          path: dist/*.deb
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: deepin-video-wallpaper ${{ steps.ver.outputs.version }}
+          body: |
+            ## Deepin 动态视频壁纸 ${{ steps.ver.outputs.version }}
+
+            ### 安装
+            ```bash
+            sudo apt install ./deepin-video-wallpaper_${{ steps.ver.outputs.version }}-1_amd64.deb
+            # 或
+            sudo dpkg -i deepin-video-wallpaper_*.deb
+            ```
+
+            ### 卸载（软件商店 / 命令行都可）
+            ```bash
+            sudo apt remove deepin-video-wallpaper
+            ```
+
+            ### 使用
+            - 视频目录：`~/Videos/video-wallpaper/`
+            - 桌面空白处右键 → 动态壁纸设置
+            - 若未生效：`systemctl --user restart 'dde-shell-plugin@org.deepin.ds.desktop.service'`
+          files: dist/*.deb
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
