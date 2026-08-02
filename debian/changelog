@@ -1,3 +1,34 @@
+deepin-video-wallpaper (1.1.4-1) unstable; urgency=medium
+
+  * 定时改微秒节拍：修复 qRound(1000/60)=17ms 导致理论顶多 ~58.8fps
+  * 双屏共用一次 fromImage，减少主线程转换开销
+  * 帧率叠层约 1 秒平均，读数更稳
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 06:55:00 +0800
+
+deepin-video-wallpaper (1.1.3-1) unstable; urgency=medium
+
+  * 帧率叠层：实际 | 设置目标 | 分辨率；设置内独立开关可关可开
+  * 仅改「显示帧率」时不重开解码，点应用立刻显隐
+  * 文案标明：目标帧率不能超过片源本身
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 06:45:00 +0800
+
+deepin-video-wallpaper (1.1.2-1) unstable; urgency=medium
+
+  * 性能：去掉每帧 img.copy；落后主动丢帧；出图不超过最大屏物理宽
+  * 4K 片源不再按 3840 硬转 RGB（壁纸场景无意义，只拖到 ~27fps）
+  * 绘制侧限流，避免双屏事件风暴
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 06:40:00 +0800
+
+deepin-video-wallpaper (1.1.1-1) unstable; urgency=medium
+
+  * 桌面左上角显示实时绘制帧率与解码分辨率
+  * 设置增加「显示实时帧率」开关（默认开）
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 06:35:00 +0800
+
 deepin-video-wallpaper (1.1.0-1) unstable; urgency=medium
 
   * 帧率上限提升到 240，支持 120/144/165/240 与原始高刷片源

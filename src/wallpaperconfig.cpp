@@ -143,6 +143,7 @@ void WallpaperConfigPrivate::load()
             o.value(QStringLiteral("smoothLevel")).toString(QStringLiteral("fast")));
     fillMode = WallpaperConfig::fillModeFromString(
             o.value(QStringLiteral("fillMode")).toString(QStringLiteral("fill")));
+    showFps = o.value(QStringLiteral("showFps")).toBool(true);
 
     screens.clear();
     const QJsonObject so = o.value(QStringLiteral("screens")).toObject();
@@ -165,6 +166,7 @@ void WallpaperConfigPrivate::store()
     o.insert(QStringLiteral("decodeMode"), WallpaperConfig::decodeModeToString(decodeMode));
     o.insert(QStringLiteral("smoothLevel"), WallpaperConfig::smoothLevelToString(smoothLevel));
     o.insert(QStringLiteral("fillMode"), WallpaperConfig::fillModeToString(fillMode));
+    o.insert(QStringLiteral("showFps"), showFps);
 
     QJsonObject so;
     for (auto it = screens.constBegin(); it != screens.constEnd(); ++it) {
@@ -231,6 +233,7 @@ int WallpaperConfig::maxWidth() const { return d->maxWidth; }
 DecodeMode WallpaperConfig::decodeMode() const { return d->decodeMode; }
 SmoothLevel WallpaperConfig::smoothLevel() const { return d->smoothLevel; }
 FillMode WallpaperConfig::fillMode() const { return d->fillMode; }
+bool WallpaperConfig::showFps() const { return d->showFps; }
 QHash<QString, ScreenSetting> WallpaperConfig::screenSettings() const { return d->screens; }
 
 void WallpaperConfig::setEnable(bool e)
@@ -257,6 +260,7 @@ void WallpaperConfig::setMaxWidth(int v)
 }
 void WallpaperConfig::setSmoothLevel(SmoothLevel m) { d->smoothLevel = m; }
 void WallpaperConfig::setFillMode(FillMode m) { d->fillMode = m; }
+void WallpaperConfig::setShowFps(bool v) { d->showFps = v; }
 void WallpaperConfig::setDecodeMode(DecodeMode m) { d->decodeMode = m; }
 
 void WallpaperConfig::setScreenSettings(const QHash<QString, ScreenSetting> &map)

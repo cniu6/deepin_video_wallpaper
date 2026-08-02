@@ -44,6 +44,7 @@ private:
     QStringList detectScreens() const;
 
     QCheckBox *enableBox = nullptr;
+    QCheckBox *showFpsBox = nullptr;
     QListWidget *screenList = nullptr;
     QLineEdit *videoEdit = nullptr;
     QPushButton *browseBtn = nullptr;

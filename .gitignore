@@ -16,3 +16,4 @@ Makefile
 *.user
 *~
 .DS_Store
+.github/workflows/

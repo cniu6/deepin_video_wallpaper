@@ -79,6 +79,11 @@ void SettingsDialog::buildUi()
     enableBox = new QCheckBox(tr("启用动态壁纸"), this);
     root->addWidget(enableBox);
 
+    // 独立开关：控制桌面左上角 fps 叠层，点应用立即生效
+    showFpsBox = new QCheckBox(tr("显示帧率叠层（桌面左上角：实际 | 设置目标 | 分辨率）"), this);
+    showFpsBox->setToolTip(tr("勾选后在壁纸左上角显示实时帧率；取消则隐藏。与「帧率」播放选项无关。"));
+    root->addWidget(showFpsBox);
+
     auto *screenBox = new QGroupBox(tr("屏幕（勾选要显示的屏，并选视频）"), this);
     auto *screenLay = new QVBoxLayout(screenBox);
     screenList = new QListWidget(screenBox);
@@ -107,26 +112,26 @@ void SettingsDialog::buildUi()
     form->addRow(tr("解码方式"), decodeBox);
 
     qualityBox = new QComboBox(optionBox);
-    // -1 = 源片原始分辨率，不降采样
-    qualityBox->addItem(tr("按屏幕宽度（推荐，省 Xorg）"), 0);
-    qualityBox->addItem(tr("源文件全分辨率（很吃资源）"), -1);
+    // 0/-1 实际都会按「最大屏物理宽」出图（壁纸超过屏宽无意义）
+    qualityBox->addItem(tr("按最大屏分辨率（推荐）"), 0);
+    qualityBox->addItem(tr("尽量清晰（不超过最大屏）"), -1);
     qualityBox->addItem(tr("最高 2560px"), 2560);
     qualityBox->addItem(tr("最高 1920px"), 1920);
     qualityBox->addItem(tr("最高 1280px"), 1280);
     form->addRow(tr("清晰度"), qualityBox);
 
     fpsBox = new QComboBox(optionBox);
-    // 0 = 跟片源；上限 240，支持高刷片源
-    fpsBox->addItem(tr("原始帧率（跟视频，最高 240）"), 0);
-    fpsBox->addItem(tr("240 fps"), 240);
-    fpsBox->addItem(tr("165 fps"), 165);
-    fpsBox->addItem(tr("144 fps"), 144);
-    fpsBox->addItem(tr("120 fps"), 120);
-    fpsBox->addItem(tr("90 fps"), 90);
-    fpsBox->addItem(tr("60 fps"), 60);
-    fpsBox->addItem(tr("30 fps"), 30);
-    fpsBox->addItem(tr("24 fps"), 24);
-    form->addRow(tr("帧率"), fpsBox);
+    // 0 = 跟片源；选固定值 = 目标输出帧率（不会超过片源本身）
+    fpsBox->addItem(tr("原始帧率（跟视频）"), 0);
+    fpsBox->addItem(tr("目标 60 fps"), 60);
+    fpsBox->addItem(tr("目标 30 fps"), 30);
+    fpsBox->addItem(tr("目标 24 fps"), 24);
+    fpsBox->addItem(tr("目标 144 fps（需片源≥144）"), 144);
+    fpsBox->addItem(tr("目标 120 fps（需片源≥120）"), 120);
+    fpsBox->addItem(tr("目标 90 fps"), 90);
+    fpsBox->addItem(tr("目标 165 fps"), 165);
+    fpsBox->addItem(tr("目标 240 fps"), 240);
+    form->addRow(tr("帧率目标"), fpsBox);
 
     fillBox = new QComboBox(optionBox);
     fillBox->addItem(tr("铺满（等比裁切，无黑边）"), int(FillMode::Fill));
@@ -154,9 +159,9 @@ void SettingsDialog::buildUi()
     tipLabel->setWordWrap(true);
     tipLabel->setStyleSheet(QStringLiteral("color:#666;"));
     tipLabel->setText(tr(
-        "帧率：原始=跟视频（片源 144 就按 144 出，不再卡 60）。"
-        "铺屏：铺满/自适应/拉伸/居中/平铺。"
-        "高刷 + 全分辨率很吃 CPU/Xorg，双屏更明显。"));
+        "帧率目标：原始=跟片源；选 60 则尽量 60（片源只有 30 就只能 30）。"
+        "左上角开关只控制叠层显示，不影响播放。"
+        "清晰度用「按最大屏」，平滑用「快速」最稳。"));
     form->addRow(tipLabel);
     root->addWidget(optionBox);
 
@@ -186,6 +191,7 @@ void SettingsDialog::loadFromConfig()
 {
     loading = true;
     enableBox->setChecked(WpCfg->enable());
+    showFpsBox->setChecked(WpCfg->showFps());
     screenMap = WpCfg->screenSettings();
 
     screenList->clear();
@@ -323,6 +329,7 @@ void SettingsDialog::collectToConfig()
     WpCfg->setDecodeMode(DecodeMode(decodeBox->currentData().toInt()));
     WpCfg->setSmoothLevel(SmoothLevel(smoothBox->currentData().toInt()));
     WpCfg->setFillMode(FillMode(fillBox->currentData().toInt()));
+    WpCfg->setShowFps(showFpsBox->isChecked());
     WpCfg->setScreenSettings(screenMap);
     WpCfg->setEnable(newEnable);
     WpCfg->save();

@@ -4,18 +4,19 @@
 
 #include <QPainter>
 #include <QPaintEvent>
+#include <QFont>
 
 using namespace ddplugin_videowallpaper;
 
 VideoProxy::VideoProxy(QWidget *parent)
     : QWidget(parent)
 {
-    // 鼠标穿透：点击落到 canvas 图标
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
-    setAttribute(Qt::WA_OpaquePaintEvent, true); // 整窗自绘，省合成
+    setAttribute(Qt::WA_OpaquePaintEvent, true);
     setAutoFillBackground(false);
     paintGate.start();
+    fpsClock.start();
 }
 
 VideoProxy::~VideoProxy()
@@ -26,24 +27,96 @@ VideoProxy::~VideoProxy()
 void VideoProxy::stop()
 {
     pixmap = QPixmap();
+    framesInWindow = 0;
+    displayFps = 0.0;
+    lastFrameW = lastFrameH = 0;
+    nextPaintUs = 0;
     update();
+}
+
+void VideoProxy::refreshOverlay()
+{
+    update();
+}
+
+void VideoProxy::notePresented(int srcW, int srcH)
+{
+    lastFrameW = srcW;
+    lastFrameH = srcH;
+    ++framesInWindow;
+    const qint64 elapsed = fpsClock.elapsed();
+    // 用约 1s 窗口，读数更稳，少抖
+    if (elapsed >= 1000) {
+        displayFps = framesInWindow * 1000.0 / double(elapsed);
+        framesInWindow = 0;
+        fpsClock.restart();
+    }
+    update();
+}
+
+void VideoProxy::updatePixmap(const QPixmap &pm, int srcW, int srcH)
+{
+    if (pm.isNull())
+        return;
+    pixmap = pm;
+    notePresented(srcW, srcH);
 }
 
 void VideoProxy::updateImage(const QImage &img)
 {
     if (img.isNull())
         return;
-    const double fps = WpCfg->fps();
-    // 跟片源：几乎不在 UI 侧再限帧（解码线程已按片源节奏出帧）
-    // 指定 fps：按目标间隔门控，最少 1ms，支持 144/240
-    qint64 interval = 1;
-    if (fps > 0.0)
-        interval = qMax<qint64>(1, qRound(1000.0 / fps));
-    if (paintGate.isValid() && paintGate.elapsed() < interval)
-        return;
+
+    // 指定帧率时用微秒门控；原始(0) 完全跟解码，不再二次卡死
+    const double cfgFps = WpCfg->fps();
+    if (cfgFps > 0.0) {
+        if (!paintGate.isValid())
+            paintGate.start();
+        const qint64 minGapUs = qMax<qint64>(1, qRound(1000000.0 / cfgFps));
+        const qint64 now = paintGate.nsecsElapsed() / 1000;
+        if (now < nextPaintUs)
+            return;
+        nextPaintUs = now + minGapUs;
+    }
+
     pixmap = QPixmap::fromImage(img);
-    paintGate.restart();
-    update();
+    notePresented(img.width(), img.height());
+}
+
+void VideoProxy::drawFpsOverlay(QPainter &pa)
+{
+    // 设置里的开关：关则完全不画
+    if (!WpCfg->showFps())
+        return;
+
+    const double cfg = WpCfg->fps();
+    const QString target = (cfg <= 0.0)
+            ? QStringLiteral("设置:原始")
+            : QStringLiteral("设置:%1").arg(qRound(cfg));
+
+    // 实际 | 设置目标 | 分辨率
+    const QString text = QStringLiteral("%1 fps | %2 | %3x%4")
+            .arg(displayFps, 0, 'f', 1)
+            .arg(target)
+            .arg(lastFrameW)
+            .arg(lastFrameH);
+
+    QFont font = pa.font();
+    font.setPointSize(13);
+    font.setBold(true);
+    pa.setFont(font);
+
+    const QFontMetrics fm(font);
+    const int pad = 8;
+    const QRect box(12, 12,
+                    fm.horizontalAdvance(text) + pad * 2,
+                    fm.height() + pad * 2);
+
+    pa.setPen(Qt::NoPen);
+    pa.setBrush(QColor(0, 0, 0, 170));
+    pa.drawRoundedRect(box, 6, 6);
+    pa.setPen(QColor(0, 255, 120));
+    pa.drawText(box, Qt::AlignCenter, text);
 }
 
 void VideoProxy::paintEvent(QPaintEvent *e)
@@ -51,15 +124,17 @@ void VideoProxy::paintEvent(QPaintEvent *e)
     Q_UNUSED(e)
     QPainter pa(this);
     pa.fillRect(rect(), Qt::black);
-    if (pixmap.isNull())
+    if (pixmap.isNull()) {
+        drawFpsOverlay(pa);
         return;
+    }
 
     const FillMode mode = WpCfg->fillMode();
-    const bool smooth = WpCfg->smoothLevel() != SmoothLevel::Fast;
+    const bool smooth = (WpCfg->smoothLevel() == SmoothLevel::High
+                         || WpCfg->smoothLevel() == SmoothLevel::Highest);
 
     switch (mode) {
     case FillMode::Fit: {
-        // 自适应：完整入屏，可能黑边
         const QSize tar = pixmap.size().scaled(size(), Qt::KeepAspectRatio);
         const int x = (width() - tar.width()) / 2;
         const int y = (height() - tar.height()) / 2;
@@ -68,13 +143,11 @@ void VideoProxy::paintEvent(QPaintEvent *e)
         break;
     }
     case FillMode::Stretch: {
-        // 拉伸：强制铺满，可能变形
         pa.setRenderHint(QPainter::SmoothPixmapTransform, smooth && size() != pixmap.size());
         pa.drawPixmap(rect(), pixmap);
         break;
     }
     case FillMode::Center: {
-        // 居中：1:1 像素，不缩放（超出则裁，不足则黑边）
         const int x = (width() - pixmap.width()) / 2;
         const int y = (height() - pixmap.height()) / 2;
         pa.setRenderHint(QPainter::SmoothPixmapTransform, false);
@@ -82,14 +155,12 @@ void VideoProxy::paintEvent(QPaintEvent *e)
         break;
     }
     case FillMode::Tile: {
-        // 平铺：重复铺满
         pa.setRenderHint(QPainter::SmoothPixmapTransform, false);
         pa.drawTiledPixmap(rect(), pixmap);
         break;
     }
     case FillMode::Fill:
     default: {
-        // 铺满：等比放大裁切，无黑边
         const QSize tar = pixmap.size().scaled(size(), Qt::KeepAspectRatioByExpanding);
         const int x = (width() - tar.width()) / 2;
         const int y = (height() - tar.height()) / 2;
@@ -98,4 +169,6 @@ void VideoProxy::paintEvent(QPaintEvent *e)
         break;
     }
     }
+
+    drawFpsOverlay(pa);
 }

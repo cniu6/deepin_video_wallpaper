@@ -94,9 +94,14 @@ QUrl WallpaperEnginePrivate::videoForScreen(const QString &screenName) const
 
 int WallpaperEnginePrivate::maxScreenWidth() const
 {
+    // 物理像素：逻辑宽 × DPR（125% 时 2048→2560）
     int maxW = 0;
-    for (QScreen *s : QGuiApplication::screens())
-        maxW = qMax(maxW, s ? s->size().width() : 0);
+    for (QScreen *s : QGuiApplication::screens()) {
+        if (!s)
+            continue;
+        const qreal dpr = s->devicePixelRatio();
+        maxW = qMax(maxW, qRound(s->size().width() * dpr));
+    }
     return maxW > 0 ? maxW : 1920;
 }
 
@@ -105,14 +110,14 @@ PlayOptions WallpaperEnginePrivate::playOptions() const
     PlayOptions opt;
     opt.mode = WpCfg->decodeMode();
     opt.smooth = WpCfg->smoothLevel();
+    opt.fill = WpCfg->fillMode();
     opt.speed = WpCfg->speed();
-    opt.fps = WpCfg->fps(); // 0=跟片源，不强制改成 30
+    opt.fps = WpCfg->fps();
     opt.maxWidth = WpCfg->maxWidth();
-    // 0：按屏幕宽度；-1：源文件全分辨率
-    if (opt.maxWidth == 0)
+    // 0 / -1：都按最大屏物理宽出图。壁纸超过屏宽毫无意义，只白白卡成 20fps
+    // （用户选「源文件全分辨率」时，片源 4K 也会缩到最大屏，例如 2560）
+    if (opt.maxWidth <= 0)
         opt.maxWidth = maxScreenWidth();
-    else if (opt.maxWidth < 0)
-        opt.maxWidth = -1;
     return opt;
 }
 
@@ -200,12 +205,18 @@ void WallpaperEnginePrivate::startSharedDecoders()
         decoder->setOptions(opt);
         decoder->setPlaylist({ it.key() });
         const QList<QString> screens = it.value();
+        // 主线程只 fromImage 一次，多屏共用同一张 pixmap（双屏省一半转换）
         QObject::connect(decoder, &VideoDecoder::frameReady, q,
                          [this, screens](const QImage &img) {
+            if (img.isNull())
+                return;
+            const QPixmap pm = QPixmap::fromImage(img);
+            const int w = img.width();
+            const int h = img.height();
             for (const QString &name : screens) {
-                VideoProxyPointer w = widgets.value(name);
-                if (!w.isNull())
-                    w->updateImage(img);
+                VideoProxyPointer proxy = widgets.value(name);
+                if (!proxy.isNull())
+                    proxy->updatePixmap(pm, w, h);
             }
         }, Qt::QueuedConnection);
         decoder->start();
@@ -503,6 +514,49 @@ void WallpaperEngine::onOptionsChanged()
 {
     if (!WpCfg->enable())
         return;
+    // 仅开关叠层：只重画，不重开解码
+    // 其它选项（帧率/清晰度/解码…）需要重建播放
+    static double s_fps = -999;
+    static int s_maxW = -999;
+    static int s_mode = -999;
+    static int s_smooth = -999;
+    static int s_fill = -999;
+    static double s_speed = -999;
+    static QString s_screens;
+
+    const double fps = WpCfg->fps();
+    const int maxW = WpCfg->maxWidth();
+    const int mode = int(WpCfg->decodeMode());
+    const int smooth = int(WpCfg->smoothLevel());
+    const int fill = int(WpCfg->fillMode());
+    const double speed = WpCfg->speed();
+    // 屏配置粗指纹
+    QString screens;
+    for (auto it = WpCfg->screenSettings().constBegin(); it != WpCfg->screenSettings().constEnd(); ++it)
+        screens += it.key() + (it.value().enabled ? QLatin1Char('1') : QLatin1Char('0')) + it.value().video;
+
+    const bool onlyOverlay = (s_fps == fps && s_maxW == maxW && s_mode == mode
+                              && s_smooth == smooth && s_fill == fill
+                              && qFuzzyCompare(s_speed + 1.0, speed + 1.0)
+                              && s_screens == screens
+                              && s_fps > -900); // 已初始化过
+
+    s_fps = fps;
+    s_maxW = maxW;
+    s_mode = mode;
+    s_smooth = smooth;
+    s_fill = fill;
+    s_speed = speed;
+    s_screens = screens;
+
+    if (onlyOverlay) {
+        for (const VideoProxyPointer &w : d->widgets) {
+            if (!w.isNull())
+                w->refreshOverlay();
+        }
+        return;
+    }
+
     build();
     play();
 }

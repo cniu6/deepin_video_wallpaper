@@ -21,6 +21,7 @@ public:
     DecodeMode decodeMode = DecodeMode::Cuda;       // 默认 NVIDIA 硬解
     SmoothLevel smoothLevel = SmoothLevel::Fast;    // 默认关掉平滑
     FillMode fillMode = FillMode::Fill;             // 默认铺满裁切
+    bool showFps = true;                            // 默认显示实时 fps
     QHash<QString, ScreenSetting> screens;
 
 private:

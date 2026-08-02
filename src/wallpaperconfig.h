@@ -71,6 +71,10 @@ public:
     FillMode fillMode() const;
     void setFillMode(FillMode);
 
+    // 桌面左上角显示实时绘制帧率
+    bool showFps() const;
+    void setShowFps(bool);
+
     QHash<QString, ScreenSetting> screenSettings() const;
     void setScreenSettings(const QHash<QString, ScreenSetting> &map);
 
