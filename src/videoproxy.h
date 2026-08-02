@@ -15,8 +15,9 @@ namespace ddplugin_videowallpaper {
 struct PlayOptions {
     DecodeMode mode = DecodeMode::Cuda;
     SmoothLevel smooth = SmoothLevel::Fast;
+    FillMode fill = FillMode::Fill;
     double speed = 1.0;
-    double fps = 0.0;   // 0=跟片源
+    double fps = 0.0;   // 0=跟片源；1~240
     int maxWidth = -1;  // -1=源文件全分辨率
 };
 
@@ -37,7 +38,6 @@ protected:
 private:
     QPixmap pixmap;
     QElapsedTimer paintGate;
-    qint64 minPaintIntervalMs = 16;
 };
 
 typedef QSharedPointer<VideoProxy> VideoProxyPointer;

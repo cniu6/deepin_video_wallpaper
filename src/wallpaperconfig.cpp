@@ -60,6 +60,33 @@ SmoothLevel WallpaperConfig::smoothLevelFromString(const QString &s)
     return SmoothLevel::High;
 }
 
+QString WallpaperConfig::fillModeToString(FillMode m)
+{
+    switch (m) {
+    case FillMode::Fit: return QStringLiteral("fit");
+    case FillMode::Stretch: return QStringLiteral("stretch");
+    case FillMode::Center: return QStringLiteral("center");
+    case FillMode::Tile: return QStringLiteral("tile");
+    case FillMode::Fill:
+    default: return QStringLiteral("fill");
+    }
+}
+
+FillMode WallpaperConfig::fillModeFromString(const QString &s)
+{
+    const QString t = s.toLower();
+    if (t == QLatin1String("fit") || t == QLatin1String("contain") || t == QLatin1String("adapt"))
+        return FillMode::Fit;
+    if (t == QLatin1String("stretch") || t == QLatin1String("scale"))
+        return FillMode::Stretch;
+    if (t == QLatin1String("center") || t == QLatin1String("original"))
+        return FillMode::Center;
+    if (t == QLatin1String("tile") || t == QLatin1String("repeat"))
+        return FillMode::Tile;
+    // fill / cover / crop
+    return FillMode::Fill;
+}
+
 QString WallpaperConfigPrivate::storePath()
 {
     // 仅供程序/设置界面读写，不用手改
@@ -97,10 +124,10 @@ void WallpaperConfigPrivate::load()
 
     const QJsonObject o = doc.object();
     enable = o.value(QStringLiteral("enable")).toBool(false);
-    // fps=0 表示跟片源；其余限制在 5~60
+    // fps=0 表示跟片源；其余限制在 1~240（支持 144/165/240 高刷）
     {
         const double v = o.value(QStringLiteral("fps")).toDouble(0.0);
-        fps = (v <= 0.0) ? 0.0 : qBound(v, 5.0, 60.0);
+        fps = (v <= 0.0) ? 0.0 : qBound(v, 1.0, 240.0);
     }
     speed = qBound(o.value(QStringLiteral("speed")).toDouble(1.0), 0.01, 4.0);
     // -1 允许（原始分辨率）
@@ -109,11 +136,13 @@ void WallpaperConfigPrivate::load()
         maxWidth = -1;
     if (maxWidth > 7680)
         maxWidth = 7680;
-    // 缺省：CUDA / 全分辨率 / 原始帧率 / 平滑关
+    // 缺省：CUDA / 全分辨率 / 原始帧率 / 平滑关 / 铺满
     decodeMode = WallpaperConfig::decodeModeFromString(
             o.value(QStringLiteral("decodeMode")).toString(QStringLiteral("cuda")));
     smoothLevel = WallpaperConfig::smoothLevelFromString(
             o.value(QStringLiteral("smoothLevel")).toString(QStringLiteral("fast")));
+    fillMode = WallpaperConfig::fillModeFromString(
+            o.value(QStringLiteral("fillMode")).toString(QStringLiteral("fill")));
 
     screens.clear();
     const QJsonObject so = o.value(QStringLiteral("screens")).toObject();
@@ -135,6 +164,7 @@ void WallpaperConfigPrivate::store()
     o.insert(QStringLiteral("maxWidth"), maxWidth);
     o.insert(QStringLiteral("decodeMode"), WallpaperConfig::decodeModeToString(decodeMode));
     o.insert(QStringLiteral("smoothLevel"), WallpaperConfig::smoothLevelToString(smoothLevel));
+    o.insert(QStringLiteral("fillMode"), WallpaperConfig::fillModeToString(fillMode));
 
     QJsonObject so;
     for (auto it = screens.constBegin(); it != screens.constEnd(); ++it) {
@@ -175,6 +205,7 @@ void WallpaperConfig::initialize()
             << "fps=" << d->fps
             << "maxWidth=" << d->maxWidth
             << "decode=" << decodeModeToString(d->decodeMode)
+            << "fill=" << fillModeToString(d->fillMode)
             << "screens=" << d->screens.keys();
 }
 
@@ -199,6 +230,7 @@ double WallpaperConfig::speed() const { return d->speed; }
 int WallpaperConfig::maxWidth() const { return d->maxWidth; }
 DecodeMode WallpaperConfig::decodeMode() const { return d->decodeMode; }
 SmoothLevel WallpaperConfig::smoothLevel() const { return d->smoothLevel; }
+FillMode WallpaperConfig::fillMode() const { return d->fillMode; }
 QHash<QString, ScreenSetting> WallpaperConfig::screenSettings() const { return d->screens; }
 
 void WallpaperConfig::setEnable(bool e)
@@ -211,7 +243,8 @@ void WallpaperConfig::setEnable(bool e)
 
 void WallpaperConfig::setFps(double v)
 {
-    d->fps = (v <= 0.0) ? 0.0 : qBound(v, 5.0, 60.0);
+    // 0=跟片源；上限 240 支持高刷片源 / 高刷屏
+    d->fps = (v <= 0.0) ? 0.0 : qBound(v, 1.0, 240.0);
 }
 void WallpaperConfig::setSpeed(double v) { d->speed = qBound(v, 0.01, 4.0); }
 void WallpaperConfig::setMaxWidth(int v)
@@ -223,6 +256,7 @@ void WallpaperConfig::setMaxWidth(int v)
     d->maxWidth = v;
 }
 void WallpaperConfig::setSmoothLevel(SmoothLevel m) { d->smoothLevel = m; }
+void WallpaperConfig::setFillMode(FillMode m) { d->fillMode = m; }
 void WallpaperConfig::setDecodeMode(DecodeMode m) { d->decodeMode = m; }
 
 void WallpaperConfig::setScreenSettings(const QHash<QString, ScreenSetting> &map)

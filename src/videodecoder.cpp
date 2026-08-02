@@ -228,14 +228,19 @@ bool VideoDecoder::playOne(const QString &path)
         return true;
     };
 
+    // 片源帧率：优先 avg，不行再用 r_frame_rate；支持 120/144/240
     double srcFps = av_q2d(st->avg_frame_rate);
-    if (srcFps < 1.0 || srcFps > 120.0)
+    if (srcFps < 1.0 || srcFps > 240.0)
+        srcFps = av_q2d(st->r_frame_rate);
+    if (srcFps < 1.0 || srcFps > 240.0)
         srcFps = 30.0;
-    // fps<=0：跟片源，不主动限帧
-    const double targetFps = (opt.fps <= 0.0) ? srcFps : qBound(opt.fps, 5.0, 60.0);
+    // fps<=0：跟片源；>0：限到 1~240（不再卡死 60）
+    const double targetFps = (opt.fps <= 0.0) ? srcFps : qBound(opt.fps, 1.0, 240.0);
     const double speed = qBound(opt.speed, 0.01, 4.0);
+    // 目标低于片源时跳帧；目标≥片源则每帧都出
     const int skipMod = qMax(1, qRound(srcFps / qMax(1.0, targetFps)));
-    const qint64 frameIntervalMs = qMax<qint64>(8, qRound(1000.0 / (targetFps * speed)));
+    // 最小 1ms，才能跑到约 1000fps 理论上限；144fps ≈ 7ms
+    const qint64 frameIntervalMs = qMax<qint64>(1, qRound(1000.0 / (targetFps * speed)));
 
     QElapsedTimer timer;
     timer.start();

@@ -52,6 +52,7 @@ private:
     QComboBox *decodeBox = nullptr;
     QComboBox *qualityBox = nullptr;
     QComboBox *fpsBox = nullptr;
+    QComboBox *fillBox = nullptr;
     QComboBox *smoothBox = nullptr;
     QDoubleSpinBox *speedSpin = nullptr;
     QLabel *tipLabel = nullptr;

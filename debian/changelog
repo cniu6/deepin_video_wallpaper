@@ -1,3 +1,11 @@
+deepin-video-wallpaper (1.1.0-1) unstable; urgency=medium
+
+  * 帧率上限提升到 240，支持 120/144/165/240 与原始高刷片源
+  * 新增铺屏方式：铺满 / 自适应 / 拉伸 / 居中 / 平铺
+  * 去掉绘制侧 16ms 门限，避免被卡在约 60fps
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 06:30:00 +0800
+
 deepin-video-wallpaper (1.0.0-1) unstable; urgency=medium
 
   * 初始打包：Deepin 25 桌面动态视频壁纸插件

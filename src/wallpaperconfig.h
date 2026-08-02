@@ -24,6 +24,15 @@ enum class SmoothLevel {
     Highest        // 最细（更吃 CPU）
 };
 
+// 画面铺屏方式（相对屏幕）
+enum class FillMode {
+    Fill = 0,      // 铺满：等比放大裁切，无黑边（默认）
+    Fit,           // 自适应：完整显示，可能有黑边
+    Stretch,       // 拉伸：拉满屏，可能变形
+    Center,        // 居中：原始像素居中，不缩放
+    Tile           // 平铺：重复铺满
+};
+
 struct ScreenSetting {
     bool enabled = false;
     QString video; // 空=用目录默认 current.mp4
@@ -59,6 +68,9 @@ public:
     SmoothLevel smoothLevel() const;
     void setSmoothLevel(SmoothLevel);
 
+    FillMode fillMode() const;
+    void setFillMode(FillMode);
+
     QHash<QString, ScreenSetting> screenSettings() const;
     void setScreenSettings(const QHash<QString, ScreenSetting> &map);
 
@@ -70,6 +82,8 @@ public:
     static DecodeMode decodeModeFromString(const QString &s);
     static QString smoothLevelToString(SmoothLevel m);
     static SmoothLevel smoothLevelFromString(const QString &s);
+    static QString fillModeToString(FillMode m);
+    static FillMode fillModeFromString(const QString &s);
 
 signals:
     void changeEnableState(bool enable);

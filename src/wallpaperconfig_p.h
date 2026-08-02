@@ -15,11 +15,12 @@ public:
     static QString storePath();
 
     bool enable = false;
-    double fps = 0.0;          // 0=跟片源原始帧率
+    double fps = 0.0;          // 0=跟片源原始帧率；>0 限到 1~240
     double speed = 1.0;
     int maxWidth = -1;         // -1=源文件全分辨率；0=按屏幕；>0=上限
     DecodeMode decodeMode = DecodeMode::Cuda;       // 默认 NVIDIA 硬解
     SmoothLevel smoothLevel = SmoothLevel::Fast;    // 默认关掉平滑
+    FillMode fillMode = FillMode::Fill;             // 默认铺满裁切
     QHash<QString, ScreenSetting> screens;
 
 private:

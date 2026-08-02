@@ -116,14 +116,25 @@ void SettingsDialog::buildUi()
     form->addRow(tr("清晰度"), qualityBox);
 
     fpsBox = new QComboBox(optionBox);
-    // 0 = 跟片源帧率
-    fpsBox->addItem(tr("原始帧率（跟视频）"), 0);
+    // 0 = 跟片源；上限 240，支持高刷片源
+    fpsBox->addItem(tr("原始帧率（跟视频，最高 240）"), 0);
+    fpsBox->addItem(tr("240 fps"), 240);
+    fpsBox->addItem(tr("165 fps"), 165);
+    fpsBox->addItem(tr("144 fps"), 144);
+    fpsBox->addItem(tr("120 fps"), 120);
+    fpsBox->addItem(tr("90 fps"), 90);
     fpsBox->addItem(tr("60 fps"), 60);
     fpsBox->addItem(tr("30 fps"), 30);
     fpsBox->addItem(tr("24 fps"), 24);
-    fpsBox->addItem(tr("20 fps"), 20);
-    fpsBox->addItem(tr("15 fps"), 15);
     form->addRow(tr("帧率"), fpsBox);
+
+    fillBox = new QComboBox(optionBox);
+    fillBox->addItem(tr("铺满（等比裁切，无黑边）"), int(FillMode::Fill));
+    fillBox->addItem(tr("自适应（完整显示，可能黑边）"), int(FillMode::Fit));
+    fillBox->addItem(tr("拉伸（拉满屏，可能变形）"), int(FillMode::Stretch));
+    fillBox->addItem(tr("居中（原始大小，不缩放）"), int(FillMode::Center));
+    fillBox->addItem(tr("平铺（重复铺满）"), int(FillMode::Tile));
+    form->addRow(tr("铺屏方式"), fillBox);
 
     smoothBox = new QComboBox(optionBox);
     smoothBox->addItem(tr("快速（锯齿多，最省）"), int(SmoothLevel::Fast));
@@ -142,7 +153,10 @@ void SettingsDialog::buildUi()
     tipLabel = new QLabel(optionBox);
     tipLabel->setWordWrap(true);
     tipLabel->setStyleSheet(QStringLiteral("color:#666;"));
-    tipLabel->setText(tr("共享解码后按屏绘制。源文件全分辨率 + 原始帧率更清晰，也更吃资源；平滑关掉最省。"));
+    tipLabel->setText(tr(
+        "帧率：原始=跟视频（片源 144 就按 144 出，不再卡 60）。"
+        "铺屏：铺满/自适应/拉伸/居中/平铺。"
+        "高刷 + 全分辨率很吃 CPU/Xorg，双屏更明显。"));
     form->addRow(tipLabel);
     root->addWidget(optionBox);
 
@@ -207,6 +221,9 @@ void SettingsDialog::loadFromConfig()
     int sIdx = smoothBox->findData(int(WpCfg->smoothLevel()));
     // 默认：快速（关掉平滑）
     smoothBox->setCurrentIndex(sIdx < 0 ? 0 : sIdx);
+
+    int fillIdx = fillBox->findData(int(WpCfg->fillMode()));
+    fillBox->setCurrentIndex(fillIdx < 0 ? 0 : fillIdx);
 
     loading = false;
 
@@ -305,6 +322,7 @@ void SettingsDialog::collectToConfig()
     WpCfg->setMaxWidth(qualityBox->currentData().toInt());
     WpCfg->setDecodeMode(DecodeMode(decodeBox->currentData().toInt()));
     WpCfg->setSmoothLevel(SmoothLevel(smoothBox->currentData().toInt()));
+    WpCfg->setFillMode(FillMode(fillBox->currentData().toInt()));
     WpCfg->setScreenSettings(screenMap);
     WpCfg->setEnable(newEnable);
     WpCfg->save();
