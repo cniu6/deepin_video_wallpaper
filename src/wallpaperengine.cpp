@@ -16,6 +16,12 @@
 #include <QScreen>
 #include <QTimer>
 #include <QDebug>
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusReply>
+#include <QWindow>
+#include <atomic>
+#include <memory>
 
 using namespace ddplugin_videowallpaper;
 DFMBASE_USE_NAMESPACE
@@ -105,6 +111,122 @@ int WallpaperEnginePrivate::maxScreenWidth() const
     return maxW > 0 ? maxW : 1920;
 }
 
+int WallpaperEnginePrivate::maxWidthForScreens(const QList<QString> &screens) const
+{
+    int maxW = 0;
+    // 优先用 QScreen 名匹配（比 widget 尚未 layout 时的 width 准）
+    for (QScreen *s : QGuiApplication::screens()) {
+        if (!s)
+            continue;
+        const QString n = s->name();
+        if (!screens.contains(n))
+            continue;
+        maxW = qMax(maxW, qMax(1, qRound(s->size().width() * s->devicePixelRatio())));
+    }
+    // 回退：控件几何
+    if (maxW <= 0) {
+        for (const QString &name : screens) {
+            VideoProxyPointer proxy = widgets.value(name);
+            if (proxy.isNull())
+                continue;
+            qreal dpr = QGuiApplication::primaryScreen()
+                    ? QGuiApplication::primaryScreen()->devicePixelRatio() : 1.0;
+            maxW = qMax(maxW, qMax(1, qRound(proxy->width() * dpr)));
+        }
+    }
+    if (maxW <= 0)
+        maxW = maxScreenWidth();
+    maxW &= ~1;
+    return maxW;
+}
+
+void WallpaperEnginePrivate::setPlaybackSuspended(bool suspended, const char *reason)
+{
+    if (playbackSuspended == suspended)
+        return;
+    playbackSuspended = suspended;
+    qInfo() << "[videowallpaper] playback" << (suspended ? "SUSPEND" : "RESUME")
+            << "reason=" << reason;
+    if (!WpCfg->enable())
+        return;
+    if (suspended) {
+        stopSharedDecoders();
+        for (const VideoProxyPointer &w : widgets) {
+            if (!w.isNull())
+                w->stop();
+        }
+    } else {
+        startDebounce->start();
+    }
+}
+
+void WallpaperEnginePrivate::setupPowerHooks()
+{
+    // 锁屏：Deepin LockFront（信号名因版本可能不同，多路尝试）
+    QDBusConnection session = QDBusConnection::sessionBus();
+    const char *lockSvc = "org.deepin.dde.LockFront1";
+    const char *lockPath = "/org/deepin/dde/LockFront1";
+    for (const char *sig : { "Locked", "Unlocked", "Visible" }) {
+        session.connect(QString::fromLatin1(lockSvc), QString::fromLatin1(lockPath),
+                        QString::fromLatin1(lockSvc), QString::fromLatin1(sig),
+                        q, SLOT(onSessionLockSignal()));
+    }
+    // 通用 ScreenSaver ActiveChanged(bool)
+    session.connect(QStringLiteral("org.freedesktop.ScreenSaver"),
+                    QStringLiteral("/ScreenSaver"),
+                    QStringLiteral("org.freedesktop.ScreenSaver"),
+                    QStringLiteral("ActiveChanged"),
+                    q, SLOT(onScreenSaverActiveChanged(bool)));
+    session.connect(QStringLiteral("org.deepin.dde.ScreenSaver1"),
+                    QStringLiteral("/org/deepin/dde/ScreenSaver1"),
+                    QStringLiteral("org.deepin.dde.ScreenSaver1"),
+                    QStringLiteral("ActiveChanged"),
+                    q, SLOT(onScreenSaverActiveChanged(bool)));
+
+    // 周期性：控件全不可见则停（被其它全屏盖住/构建间隙）
+    visibilityTimer = new QTimer(q);
+    visibilityTimer->setInterval(2000);
+    QObject::connect(visibilityTimer, &QTimer::timeout, q, [this]() {
+        if (!WpCfg->enable() || sessionLocked || screenSaverActive)
+            return;
+        bool anyVisible = false;
+        for (auto it = widgets.constBegin(); it != widgets.constEnd(); ++it) {
+            if (!it.value().isNull() && it.value()->isVisible()
+                && isScreenActive(it.key())) {
+                anyVisible = true;
+                break;
+            }
+        }
+        if (!anyVisible && !decoders.isEmpty())
+            setPlaybackSuspended(true, "all-widgets-hidden");
+        else if (anyVisible && playbackSuspended && !sessionLocked && !screenSaverActive)
+            setPlaybackSuspended(false, "widget-visible");
+    });
+    visibilityTimer->start();
+
+    QObject::connect(qApp, &QGuiApplication::applicationStateChanged, q,
+                     [this](Qt::ApplicationState st) {
+        // 会话被挂起/完全隐藏时停解码；Inactive 不停（切窗口仍要壁纸）
+        if (st == Qt::ApplicationSuspended) {
+            setPlaybackSuspended(true, "app-suspended");
+        } else if (st == Qt::ApplicationActive
+                   && playbackSuspended
+                   && !sessionLocked
+                   && !screenSaverActive) {
+            // 仅当因 app-suspended 停且无锁时恢复；visibility 逻辑会再校正
+            bool anyVisible = false;
+            for (auto it = widgets.constBegin(); it != widgets.constEnd(); ++it) {
+                if (!it.value().isNull() && it.value()->isVisible() && isScreenActive(it.key())) {
+                    anyVisible = true;
+                    break;
+                }
+            }
+            if (anyVisible)
+                setPlaybackSuspended(false, "app-active");
+        }
+    });
+}
+
 PlayOptions WallpaperEnginePrivate::playOptions() const
 {
     PlayOptions opt;
@@ -123,8 +245,8 @@ PlayOptions WallpaperEnginePrivate::playOptions() const
 
 VideoProxyPointer WallpaperEnginePrivate::createWidget(QWidget *root)
 {
-    VideoProxyPointer bwp(new VideoProxy());
-    bwp->setParent(root);
+    // 构造即 parent：嵌入桌面，禁止独立顶层窗
+    VideoProxyPointer bwp(new VideoProxy(root));
     bwp->setGeometry(relativeGeometry(root->geometry()));
     const QString name = getScreenName(root);
     bwp->setProperty(DesktopFrameProperty::kPropScreenName, name);
@@ -192,6 +314,8 @@ void WallpaperEnginePrivate::startSharedDecoders()
     opt.speed = popt.speed;
     opt.fps = popt.fps;
     opt.maxWidth = popt.maxWidth;
+    opt.preferNv12 = false; // 嵌入 QWidget：解码侧 RGB
+    // 本机 X11 下硬解仍 transfer+sws+贴屏，总 CPU 与软解接近；软解路径更简单稳定
 
     QHash<QUrl, QList<QString>> urlScreens;
     for (auto it = screenVideo.constBegin(); it != screenVideo.constEnd(); ++it) {
@@ -202,27 +326,49 @@ void WallpaperEnginePrivate::startSharedDecoders()
 
     for (auto it = urlScreens.begin(); it != urlScreens.end(); ++it) {
         auto *decoder = new VideoDecoder(q);
-        decoder->setOptions(opt);
-        decoder->setPlaylist({ it.key() });
+        DecodeOptions decOpt = opt;
         const QList<QString> screens = it.value();
-        // 主线程只 fromImage 一次，多屏共用同一张 pixmap（双屏省一半转换）
+        // 按实际挂接屏控件宽度出图（双屏 1920+2560 时 1920 屏不再被迫 2560 宽）
+        const int geoW = maxWidthForScreens(screens);
+        if (geoW > 0 && (decOpt.maxWidth <= 0 || geoW < decOpt.maxWidth))
+            decOpt.maxWidth = geoW;
+        decoder->setOptions(decOpt);
+        decoder->setPlaylist({ it.key() });
+        // 主线程只 fromImage 一次；处理完 releaseFrameSlot，解码才推下一帧（单槽=队列深度 1）
         QObject::connect(decoder, &VideoDecoder::frameReady, q,
-                         [this, screens](const QImage &img) {
-            if (img.isNull())
+                         [this, screens, decoder](const VideoFrame &frame) {
+            if (frame.isNull()) {
+                decoder->releaseFrameSlot();
                 return;
-            const QPixmap pm = QPixmap::fromImage(img);
-            const int w = img.width();
-            const int h = img.height();
+            }
+            QList<VideoProxyPointer> targets;
+            targets.reserve(screens.size());
             for (const QString &name : screens) {
                 VideoProxyPointer proxy = widgets.value(name);
-                if (!proxy.isNull())
-                    proxy->updatePixmap(pm, w, h);
+                if (!proxy.isNull() && proxy->isVisible())
+                    targets.append(proxy);
             }
+            if (targets.isEmpty()) {
+                decoder->releaseFrameSlot();
+                return;
+            }
+            // 架构：解码线程已是 RGB；主线程只 fromImage 一次，双屏共享 QPixmap + drawPixmap
+            // （嵌入 QWidget，无独立窗）。提交后立刻 release，在途深度见 VideoDecoder::kMaxInFlight。
+            if (frame.format != VideoFrame::Format::Rgb32 || frame.rgb.isNull()) {
+                decoder->releaseFrameSlot();
+                return;
+            }
+            const QPixmap pm = QPixmap::fromImage(frame.rgb);
+            const int w = frame.width > 0 ? frame.width : pm.width();
+            const int h = frame.height > 0 ? frame.height : pm.height();
+            for (const VideoProxyPointer &proxy : targets)
+                proxy->presentPixmap(pm, w, h, {});
+            decoder->releaseFrameSlot();
         }, Qt::QueuedConnection);
         decoder->start();
         decoders.insert(it.key(), decoder);
         qInfo() << "[videowallpaper] shared decoder" << it.key() << "screens" << screens
-                << "maxW" << opt.maxWidth << "fps" << opt.fps;
+                << "maxW" << decOpt.maxWidth << "fps" << decOpt.fps;
     }
 }
 
@@ -238,6 +384,10 @@ void WallpaperEnginePrivate::stopPlayers()
 
 void WallpaperEnginePrivate::startPlayers()
 {
+    if (playbackSuspended || sessionLocked || screenSaverActive) {
+        qInfo() << "[videowallpaper] startPlayers skipped (suspended)";
+        return;
+    }
     stopSharedDecoders();
     for (const VideoProxyPointer &w : widgets)
         if (!w.isNull())
@@ -260,6 +410,32 @@ WallpaperEngine::WallpaperEngine(QObject *parent)
         if (WpCfg->enable())
             d->startPlayers();
     });
+    d->setupPowerHooks();
+}
+
+void WallpaperEngine::onSessionLockSignal()
+{
+    // Visible/Locked/Unlocked 无参：轮询 Active 属性更稳
+    QDBusInterface lock(QStringLiteral("org.deepin.dde.LockFront1"),
+                        QStringLiteral("/org/deepin/dde/LockFront1"),
+                        QStringLiteral("org.deepin.dde.LockFront1"),
+                        QDBusConnection::sessionBus());
+    bool locked = false;
+    if (lock.isValid()) {
+        const QVariant v = lock.property("Visible");
+        if (v.isValid())
+            locked = v.toBool();
+    }
+    d->sessionLocked = locked;
+    d->setPlaybackSuspended(locked || d->screenSaverActive,
+                            locked ? "session-lock" : "session-unlock");
+}
+
+void WallpaperEngine::onScreenSaverActiveChanged(bool active)
+{
+    d->screenSaverActive = active;
+    d->setPlaybackSuspended(d->sessionLocked || active,
+                            active ? "screensaver-on" : "screensaver-off");
 }
 
 WallpaperEngine::~WallpaperEngine()
@@ -515,7 +691,7 @@ void WallpaperEngine::onOptionsChanged()
     if (!WpCfg->enable())
         return;
     // 仅开关叠层：只重画，不重开解码
-    // 其它选项（帧率/清晰度/解码…）需要重建播放
+    // 解码方式/帧率/清晰度等：重建播放（解码切换开关走这里）
     static double s_fps = -999;
     static int s_maxW = -999;
     static int s_mode = -999;
@@ -535,11 +711,19 @@ void WallpaperEngine::onOptionsChanged()
     for (auto it = WpCfg->screenSettings().constBegin(); it != WpCfg->screenSettings().constEnd(); ++it)
         screens += it.key() + (it.value().enabled ? QLatin1Char('1') : QLatin1Char('0')) + it.value().video;
 
+    const bool decodeSwitched = (s_mode > -900 && s_mode != mode);
     const bool onlyOverlay = (s_fps == fps && s_maxW == maxW && s_mode == mode
                               && s_smooth == smooth && s_fill == fill
                               && qFuzzyCompare(s_speed + 1.0, speed + 1.0)
                               && s_screens == screens
                               && s_fps > -900); // 已初始化过
+
+    if (decodeSwitched) {
+        qInfo() << "[videowallpaper] decode switch"
+                << WallpaperConfig::decodeModeToString(DecodeMode(s_mode))
+                << "->"
+                << WallpaperConfig::decodeModeToString(DecodeMode(mode));
+    }
 
     s_fps = fps;
     s_maxW = maxW;

@@ -7,6 +7,7 @@ Build-Depends:
  cmake,
  pkg-config,
  qt6-base-dev,
+ qt6-base-dev, # OpenGLWidgets in qt6-base
  libdtk6core-dev,
  libavformat-dev,
  libavcodec-dev,

@@ -104,12 +104,23 @@ void SettingsDialog::buildUi()
     optionBox = new QGroupBox(tr("播放选项"), this);
     auto *form = new QFormLayout(optionBox);
 
+    // 可切换：CPU 软解 ↔ GPU 硬解（点「应用」后立刻重建解码器）
     decodeBox = new QComboBox(optionBox);
-    decodeBox->addItem(tr("自动（CUDA → VAAPI → 软解）"), int(DecodeMode::Auto));
-    decodeBox->addItem(tr("NVIDIA 硬解 (CUDA)"), int(DecodeMode::Cuda));
-    decodeBox->addItem(tr("核显硬解 (VAAPI)"), int(DecodeMode::Vaapi));
-    decodeBox->addItem(tr("软解 (CPU)"), int(DecodeMode::Software));
-    form->addRow(tr("解码方式"), decodeBox);
+    decodeBox->addItem(tr("CPU 软解（直接解码贴桌面，简单稳）"), int(DecodeMode::Software));
+    decodeBox->addItem(tr("NVIDIA 硬解 CUDA（GPU 解，仍要回传贴屏）"), int(DecodeMode::Cuda));
+    decodeBox->addItem(tr("核显硬解 VAAPI"), int(DecodeMode::Vaapi));
+    decodeBox->addItem(tr("自动（先 CUDA，再 VAAPI，最后软解）"), int(DecodeMode::Auto));
+    decodeBox->setToolTip(tr(
+        "可随时切换。X11 嵌桌面时硬解往往不比软解更省总 CPU/Xorg；"
+        "选软解更接近早期「纯 CPU 显示」。点应用后立即生效。"));
+    form->addRow(tr("解码切换"), decodeBox);
+
+    decodeTipLabel = new QLabel(optionBox);
+    decodeTipLabel->setWordWrap(true);
+    decodeTipLabel->setStyleSheet(QStringLiteral("color:#2a6; font-size:12px;"));
+    form->addRow(QString(), decodeTipLabel);
+    connect(decodeBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { refreshDecodeTip(); });
 
     qualityBox = new QComboBox(optionBox);
     // 0/-1 实际都会按「最大屏物理宽」出图（壁纸超过屏宽无意义）
@@ -159,9 +170,9 @@ void SettingsDialog::buildUi()
     tipLabel->setWordWrap(true);
     tipLabel->setStyleSheet(QStringLiteral("color:#666;"));
     tipLabel->setText(tr(
-        "帧率目标：原始=跟片源；选 60 则尽量 60（片源只有 30 就只能 30）。"
-        "左上角开关只控制叠层显示，不影响播放。"
-        "清晰度用「按最大屏」，平滑用「快速」最稳。"));
+        "【解码切换】CPU 软解 / CUDA / VAAPI / 自动，点应用立即切换，无需重装。"
+        "【帧率】原始=跟片源；选 30 可明显降占用。"
+        "左上角叠层只显示统计，不改播放。"));
     form->addRow(tipLabel);
     root->addWidget(optionBox);
 
@@ -211,7 +222,9 @@ void SettingsDialog::loadFromConfig()
         screenList->setCurrentRow(0);
 
     int modeIdx = decodeBox->findData(int(WpCfg->decodeMode()));
+    // 缺省/未知：CPU 软解（第一项）
     decodeBox->setCurrentIndex(modeIdx < 0 ? 0 : modeIdx);
+    refreshDecodeTip();
 
     int qIdx = qualityBox->findData(WpCfg->maxWidth());
     qualityBox->setCurrentIndex(qIdx < 0 ? 0 : qIdx);
@@ -315,6 +328,28 @@ void SettingsDialog::refreshOptionEnabled()
 {
     optionBox->setEnabled(true);
     Q_UNUSED(enableBox)
+}
+
+void SettingsDialog::refreshDecodeTip()
+{
+    if (!decodeTipLabel || !decodeBox)
+        return;
+    const DecodeMode m = DecodeMode(decodeBox->currentData().toInt());
+    switch (m) {
+    case DecodeMode::Software:
+        decodeTipLabel->setText(tr("当前：CPU 软解 → 直接出 RGB 贴桌面（无独立窗）。总占用与硬解在 X11 上往往接近。"));
+        break;
+    case DecodeMode::Cuda:
+        decodeTipLabel->setText(tr("当前：NVIDIA CUDA 硬解 → 仍要回传内存再贴桌面。可切换回「CPU 软解」对比。"));
+        break;
+    case DecodeMode::Vaapi:
+        decodeTipLabel->setText(tr("当前：VAAPI 核显硬解 → 同样要回传+贴屏。失败时请改 CPU 软解或自动。"));
+        break;
+    case DecodeMode::Auto:
+    default:
+        decodeTipLabel->setText(tr("当前：自动尝试 CUDA → VAAPI → 软解。需要固定路径请手动选 CPU 或 CUDA。"));
+        break;
+    }
 }
 
 void SettingsDialog::collectToConfig()

@@ -11,9 +11,12 @@ using namespace ddplugin_videowallpaper;
 VideoProxy::VideoProxy(QWidget *parent)
     : QWidget(parent)
 {
+    // 钉死嵌入：绝不当顶层窗
+    setWindowFlags(Qt::Widget);
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAttribute(Qt::WA_OpaquePaintEvent, true);
+    setAttribute(Qt::WA_DontCreateNativeAncestors, true);
     setAutoFillBackground(false);
     paintGate.start();
     fpsClock.start();
@@ -31,43 +34,60 @@ void VideoProxy::stop()
     displayFps = 0.0;
     lastFrameW = lastFrameH = 0;
     nextPaintUs = 0;
+    paintScheduled = false;
+    afterPaint = {};
     update();
 }
 
 void VideoProxy::refreshOverlay()
 {
-    update();
+    if (!paintScheduled) {
+        paintScheduled = true;
+        update();
+    }
 }
 
-void VideoProxy::notePresented(int srcW, int srcH)
+void VideoProxy::armPaint(int srcW, int srcH)
 {
     lastFrameW = srcW;
     lastFrameH = srcH;
     ++framesInWindow;
     const qint64 elapsed = fpsClock.elapsed();
-    // 用约 1s 窗口，读数更稳，少抖
     if (elapsed >= 1000) {
         displayFps = framesInWindow * 1000.0 / double(elapsed);
         framesInWindow = 0;
         fpsClock.restart();
     }
-    update();
+    if (!paintScheduled) {
+        paintScheduled = true;
+        update();
+    }
 }
 
-void VideoProxy::updatePixmap(const QPixmap &pm, int srcW, int srcH)
+void VideoProxy::presentPixmap(const QPixmap &pm, int srcW, int srcH,
+                               const std::function<void()> &painted)
 {
     if (pm.isNull())
         return;
     pixmap = pm;
-    notePresented(srcW, srcH);
+    afterPaint = painted;
+    armPaint(srcW > 0 ? srcW : pm.width(), srcH > 0 ? srcH : pm.height());
+}
+
+void VideoProxy::present(const VideoFrame &vf, const std::function<void()> &painted)
+{
+    if (vf.isNull())
+        return;
+    // 架构：色彩转换只在解码线程；此处只收 RGB
+    if (vf.format != VideoFrame::Format::Rgb32 || vf.rgb.isNull())
+        return;
+    presentPixmap(QPixmap::fromImage(vf.rgb), vf.width, vf.height, painted);
 }
 
 void VideoProxy::updateImage(const QImage &img)
 {
     if (img.isNull())
         return;
-
-    // 指定帧率时用微秒门控；原始(0) 完全跟解码，不再二次卡死
     const double cfgFps = WpCfg->fps();
     if (cfgFps > 0.0) {
         if (!paintGate.isValid())
@@ -78,40 +98,26 @@ void VideoProxy::updateImage(const QImage &img)
             return;
         nextPaintUs = now + minGapUs;
     }
-
-    pixmap = QPixmap::fromImage(img);
-    notePresented(img.width(), img.height());
+    presentPixmap(QPixmap::fromImage(img), img.width(), img.height(), {});
 }
 
 void VideoProxy::drawFpsOverlay(QPainter &pa)
 {
-    // 设置里的开关：关则完全不画
     if (!WpCfg->showFps())
         return;
-
     const double cfg = WpCfg->fps();
     const QString target = (cfg <= 0.0)
             ? QStringLiteral("设置:原始")
             : QStringLiteral("设置:%1").arg(qRound(cfg));
-
-    // 实际 | 设置目标 | 分辨率
     const QString text = QStringLiteral("%1 fps | %2 | %3x%4")
-            .arg(displayFps, 0, 'f', 1)
-            .arg(target)
-            .arg(lastFrameW)
-            .arg(lastFrameH);
-
+            .arg(displayFps, 0, 'f', 1).arg(target).arg(lastFrameW).arg(lastFrameH);
     QFont font = pa.font();
     font.setPointSize(13);
     font.setBold(true);
     pa.setFont(font);
-
     const QFontMetrics fm(font);
     const int pad = 8;
-    const QRect box(12, 12,
-                    fm.horizontalAdvance(text) + pad * 2,
-                    fm.height() + pad * 2);
-
+    const QRect box(12, 12, fm.horizontalAdvance(text) + pad * 2, fm.height() + pad * 2);
     pa.setPen(Qt::NoPen);
     pa.setBrush(QColor(0, 0, 0, 170));
     pa.drawRoundedRect(box, 6, 6);
@@ -122,53 +128,60 @@ void VideoProxy::drawFpsOverlay(QPainter &pa)
 void VideoProxy::paintEvent(QPaintEvent *e)
 {
     Q_UNUSED(e)
+    paintScheduled = false;
+    std::function<void()> done = std::move(afterPaint);
+    afterPaint = {};
+
     QPainter pa(this);
-    pa.fillRect(rect(), Qt::black);
     if (pixmap.isNull()) {
+        pa.fillRect(rect(), Qt::black);
         drawFpsOverlay(pa);
+        if (done) done();
         return;
     }
 
+    pa.setRenderHint(QPainter::SmoothPixmapTransform, false);
     const FillMode mode = WpCfg->fillMode();
-    const bool smooth = (WpCfg->smoothLevel() == SmoothLevel::High
-                         || WpCfg->smoothLevel() == SmoothLevel::Highest);
+    const QSize ps = pixmap.size();
+    const QSize ws = size();
+
+    // 1:1：零缩放
+    if (ps == ws) {
+        pa.drawPixmap(0, 0, pixmap);
+        drawFpsOverlay(pa);
+        if (done) done();
+        return;
+    }
 
     switch (mode) {
     case FillMode::Fit: {
-        const QSize tar = pixmap.size().scaled(size(), Qt::KeepAspectRatio);
-        const int x = (width() - tar.width()) / 2;
-        const int y = (height() - tar.height()) / 2;
-        pa.setRenderHint(QPainter::SmoothPixmapTransform, smooth && tar != pixmap.size());
+        const QSize tar = ps.scaled(ws, Qt::KeepAspectRatio);
+        const int x = (ws.width() - tar.width()) / 2;
+        const int y = (ws.height() - tar.height()) / 2;
+        if (tar != ws)
+            pa.fillRect(rect(), Qt::black);
         pa.drawPixmap(QRect(x, y, tar.width(), tar.height()), pixmap);
         break;
     }
-    case FillMode::Stretch: {
-        pa.setRenderHint(QPainter::SmoothPixmapTransform, smooth && size() != pixmap.size());
+    case FillMode::Stretch:
         pa.drawPixmap(rect(), pixmap);
         break;
-    }
-    case FillMode::Center: {
-        const int x = (width() - pixmap.width()) / 2;
-        const int y = (height() - pixmap.height()) / 2;
-        pa.setRenderHint(QPainter::SmoothPixmapTransform, false);
-        pa.drawPixmap(x, y, pixmap);
+    case FillMode::Center:
+        pa.fillRect(rect(), Qt::black);
+        pa.drawPixmap((ws.width() - ps.width()) / 2, (ws.height() - ps.height()) / 2, pixmap);
         break;
-    }
-    case FillMode::Tile: {
-        pa.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    case FillMode::Tile:
         pa.drawTiledPixmap(rect(), pixmap);
         break;
-    }
     case FillMode::Fill:
     default: {
-        const QSize tar = pixmap.size().scaled(size(), Qt::KeepAspectRatioByExpanding);
-        const int x = (width() - tar.width()) / 2;
-        const int y = (height() - tar.height()) / 2;
-        pa.setRenderHint(QPainter::SmoothPixmapTransform, smooth && tar != pixmap.size());
+        const QSize tar = ps.scaled(ws, Qt::KeepAspectRatioByExpanding);
+        const int x = (ws.width() - tar.width()) / 2;
+        const int y = (ws.height() - tar.height()) / 2;
         pa.drawPixmap(QRect(x, y, tar.width(), tar.height()), pixmap);
         break;
     }
     }
-
     drawFpsOverlay(pa);
+    if (done) done();
 }

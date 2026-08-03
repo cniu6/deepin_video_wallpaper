@@ -1,3 +1,201 @@
+deepin-video-wallpaper (1.6.2-1) unstable; urgency=medium
+
+  * 设置「解码切换」：CPU 软解 / CUDA / VAAPI / 自动，应用后立即重建
+  * 切换说明文案；缺省 software，可随时改回硬解
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Tue, 04 Aug 2026 00:30:00 +0800
+
+deepin-video-wallpaper (1.6.1-1) unstable; urgency=medium
+
+  * 承认 X11 嵌入桌面路径下 CUDA 硬解无法降低总 CPU/Xorg（仍 transfer+sws+贴屏）
+  * 默认改回 software 软解 + 嵌入 QWidget/QPixmap（接近首版直接 CPU 显示）
+  * 保留共享解码、背压、几何 maxW、锁屏挂起；设置里仍可选 cuda
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Tue, 04 Aug 2026 00:10:00 +0800
+
+deepin-video-wallpaper (1.6.0-1) unstable; urgency=medium
+
+  * 架构（必须嵌桌面、禁止独立窗）：解码线程 RGB + 主线程单次 QPixmap::fromImage
+  * 双屏共享 QPixmap + drawPixmap；去掉主线程 NV12 逐像素与 QOpenGLWidget
+  * 保留在途深度 2、几何 maxW、锁屏挂起；跟片源 fps/speed 不默认强限
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 23:50:00 +0800
+
+deepin-video-wallpaper (1.5.4-1) unstable; urgency=medium
+
+  * 真正修复 60→30：Queued 背压深度从 1 提到 2，主线程慢半拍不再隔帧全丢
+  * present 后立即 release；fps=0+speed=1 跟片源 60，无设置限帧
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 23:30:00 +0800
+
+deepin-video-wallpaper (1.5.3-1) unstable; urgency=medium
+
+  * 修复 ~30fps：present 后立即 releaseFrameSlot，不再等双屏 paint 完才解码
+  * 落后丢帧时钟改为按 interval 推进，减少连锁掉帧
+  * 非设置限帧：fps=0 + speed=1 跟片源
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 23:20:00 +0800
+
+deepin-video-wallpaper (1.5.2-1) unstable; urgency=medium
+
+  * 撤回 QOpenGLWidget：修复「窗口化/独立框」桌面壁纸
+  * 恢复嵌入 QWidget + drawImage；解码默认 RGB（preferNv12=false）
+  * 说明：设置 speed=0.5 时 60fps 片源会显示约 30fps（非插件强限）
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 23:00:00 +0800
+
+deepin-video-wallpaper (1.5.1-1) unstable; urgency=medium
+
+  * 4K→屏宽：sws 输出 NV12 再 GL 着色（不再被迫 RGB32），减少 CPU 色彩转换
+  * 日志 presentFmt=NV12/RGB32 便于确认路径
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 22:45:00 +0800
+
+deepin-video-wallpaper (1.5.0-1) unstable; urgency=medium
+
+  * GPU 显示路径：硬解回传 NV12 直接上传 GL 双平面，着色器 YUV→RGB（跳过 CPU sws）
+  * 需缩放时仍 sws→RGB-GL；构造带 parent 的 QOpenGLWidget
+  * 保留单槽背压、几何 maxW、锁屏挂起；非零拷贝 DMA-BUF（合成器 API 仍不可用）
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 22:30:00 +0800
+
+deepin-video-wallpaper (1.4.2-1) unstable; urgency=medium
+
+  * 撤回 1.4.1 主线程每帧 Fast 缩图（双屏同片实测加重 dde 主线程）
+  * 保留最优组合：QImage 共享+单槽背压+QScreen 几何 maxW+锁屏/屏保/隐藏/挂起停解
+  * 试验结论写入 docs/OPTIMIZATION_TRIALS.md
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 22:10:00 +0800
+
+deepin-video-wallpaper (1.4.1-1) unstable; urgency=medium
+
+  * 出图宽优先按 QScreen 名匹配物理宽；小屏 present 前 Fast 缩图减 paint 负担
+  * ApplicationSuspended 时挂起解码
+  * 汇总试验：OpenGL 嵌入失败；DMA-BUF/Wayland 本机不可落地；最优=软件路径+背压+几何+挂起
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 22:00:00 +0800
+
+deepin-video-wallpaper (1.4.0-1) unstable; urgency=medium
+
+  * 策略：锁屏/屏保/控件全隐藏时挂起解码（DBus + 可见性轮询），恢复自动播
+  * 出图宽按实际挂接屏控件几何，避免小屏被最大屏拖成超宽 sws/paint
+  * 保留 QImage 共享 + paint 后单槽背压；不改用户清晰度/帧率设置项
+  * 探测：当前为 X11 会话，DMA-BUF 进 dde 合成器无稳定公开 API；Wayland 未在用
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 21:45:00 +0800
+
+deepin-video-wallpaper (1.3.1-1) unstable; urgency=medium
+
+  * 撤回 1.3.0 嵌入式 OpenGL 试验：本机实测未降 Xorg，dde 反而升高
+  * 回到 1.2.6 路径：QImage 共享 + drawImage + paint 后单槽背压
+  * 结论记录：QOpenGLWidget 在 dde X11 桌面插件上仍走合成，不替代软件 damage
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 21:30:00 +0800
+
+deepin-video-wallpaper (1.3.0-1) unstable; urgency=medium
+
+  * 试验：嵌入式 QOpenGLWidget 纹理呈现，减少 X11 软件 drawImage/PutImage
+  * 构造即 parent + Qt::Widget 标志，规避独立顶层窗「框」
+  * 保留单槽背压与多屏共享帧；不改用户清晰度/帧率
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 21:15:00 +0800
+
+deepin-video-wallpaper (1.2.6-1) unstable; urgency=medium
+
+  * 定点：去掉 X11 上每帧 QPixmap::fromImage；多屏共享 QImage + drawImage
+  * 解码单槽：全部屏 paintEvent 结束后再 release（禁止与 paint 重叠做 transfer/sws）
+  * paint 合并、1:1 快路径、Fit 仅黑边清屏；不改用户清晰度/帧率
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 21:00:00 +0800
+
+deepin-video-wallpaper (1.2.5-1) unstable; urgency=medium
+
+  * 定点：单槽背压（主线程未处理完不 transfer/sws，仍按时间线 sleep，无忙等）
+  * 解码双缓冲复用 QImage；paint 合并 + Fit 仅黑边清屏 + 1:1 快路径
+  * 保持用户清晰度/帧率设置不变；嵌入 QWidget 不独立成框
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 20:50:00 +0800
+
+deepin-video-wallpaper (1.2.4-1) unstable; urgency=medium
+
+  * 呈现/解码路径与 origin/main 对齐（QPixmap 单次 fromImage + drawPixmap）
+  * 撤销错误背压与 CompositionMode 实验（曾推高 dde-shell 主线程）
+  * 保留非阻塞 dpkg 脚本
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 20:35:00 +0800
+
+deepin-video-wallpaper (1.2.3-1) unstable; urgency=medium
+
+  * 背压在 paintEvent 之后放行（修复 update 后立刻 frameConsumed 导致无效）
+  * 双屏共享计数：全部屏画完再解码下一帧；仍按时间线 sleep，无忙等
+  * paint 合并 + origin QPixmap 单次 fromImage；不改清晰度/帧率设置
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 20:25:00 +0800
+
+deepin-video-wallpaper (1.2.2-1) unstable; urgency=medium
+
+  * 对照 origin：恢复 QPixmap 单次 fromImage + drawPixmap
+  * 修复 dde-shell 主线程打满：paint 合并（paintPending），避免每帧堆积 update
+  * 解码背压：主线程未消费则跳过 transfer/sws，但仍按时间线 sleep（禁止 1.2.0 忙等）
+  * 不改用户清晰度/帧率设置
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 20:15:00 +0800
+
+deepin-video-wallpaper (1.2.1-1) unstable; urgency=medium
+
+  * 对照 origin/main：恢复 QPixmap 单次 fromImage + drawPixmap 呈现路径
+  * 去掉 1.2.0 背压忙等（丢帧不 sleep 导致 dde-shell CPU 飙高）
+  * 保留非阻塞 postinst/prerm，避免 dpkg 卡死
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 20:05:00 +0800
+
+deepin-video-wallpaper (1.2.0-1) unstable; urgency=medium
+
+  * 不改用户清晰度/帧率：解码背压（主线程忙则跳过 transfer/sws）、双缓冲复用
+  * 呈现：RGB32 零拷贝共享；同尺寸 1:1 快路径
+  * 保持嵌入式 QWidget，避免独立框
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 19:50:00 +0800
+
+deepin-video-wallpaper (1.1.9-1) unstable; urgency=medium
+
+  * 撤销 1.1.8 默认 12fps / 1280 省电限制：原始帧率跟片源，清晰度 0 恢复最大屏宽
+  * 呈现门控仅在用户设置固定帧率时生效
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 19:40:00 +0800
+
+deepin-video-wallpaper (1.1.8-1) unstable; urgency=medium
+
+  * 降 Xorg：自动模式呈现/解码默认约 12fps；清晰度 0=上限 1280px
+  * 呈现侧门控+事件合并，丢中间帧只贴最新，减少全屏 damage
+  * paint 关闭 Smooth，缩放交给解码 sws
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 19:25:00 +0800
+
+deepin-video-wallpaper (1.1.7-1) unstable; urgency=medium
+
+  * 修复：撤销 QOpenGLWidget 独立 native 窗口，壁纸重新嵌回桌面 root（不再像独立框）
+  * 仍用共享 QImage + 默认原始帧率封顶 30，降低 CPU；呈现走 QWidget::drawImage
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 19:20:00 +0800
+
+deepin-video-wallpaper (1.1.6-1) unstable; urgency=medium
+
+  * 版本升级：OpenGL 呈现 + 安装 postinst 不再同步阻塞 systemctl（修复 dpkg 卡在「正在设置」）
+  * postinst 后台/超时重启桌面，避免 iF 半配置
+  * 本机安装脚本优先拷 so，配置步与用户会话重启分离
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 18:30:00 +0800
+
+deepin-video-wallpaper (1.1.5-1) unstable; urgency=medium
+
+  * 呈现改走 QOpenGLWidget 纹理，减轻 X11 软件 drawPixmap 导致的 Xorg 高占用
+  * 多屏直接共享 QImage 上传 GL，去掉每帧 QPixmap::fromImage
+  * 设置「原始帧率」时解码默认封顶 30fps（显式 60/144 仍尊重）
+  * 依赖补充 Qt6 OpenGL / OpenGLWidgets
+
+ -- cniu6 <cniu6@users.noreply.github.com>  Mon, 03 Aug 2026 18:10:00 +0800
+
 deepin-video-wallpaper (1.1.4-1) unstable; urgency=medium
 
   * 定时改微秒节拍：修复 qRound(1000/60)=17ms 导致理论顶多 ~58.8fps

@@ -1,24 +1,28 @@
 #!/bin/sh
 set -e
 
-# 安装/升级后尽量热重载桌面插件；失败不阻断安装
+# 绝不能在 dpkg 里同步阻塞 systemctl，否则会卡在「正在设置…」
 restart_desktop() {
-    # 图形会话用户
     for uid in $(ls /run/user 2>/dev/null || true); do
+        case "$uid" in
+            *[!0-9]*) continue ;;
+        esac
         [ -S "/run/user/$uid/bus" ] || continue
         user=$(getent passwd "$uid" | cut -d: -f1)
         [ -n "$user" ] || continue
-        su -s /bin/sh -c \
-            "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
-             systemctl --user restart 'dde-shell-plugin@org.deepin.ds.desktop.service' 2>/dev/null" \
-            "$user" || true
+        su -s /bin/sh -c "
+            export XDG_RUNTIME_DIR=/run/user/$uid
+            export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus
+            timeout 8 systemctl --user restart 'dde-shell-plugin@org.deepin.ds.desktop.service' >/dev/null 2>&1 || true
+        " "$user" >/dev/null 2>&1 &
     done
+    true
 }
 
 case "$1" in
     configure)
         restart_desktop
-        echo "deepin-video-wallpaper: 已安装。若壁纸未出现，请注销或执行："
+        echo "deepin-video-wallpaper: 已安装。若壁纸未刷新，在用户终端执行："
         echo "  systemctl --user restart 'dde-shell-plugin@org.deepin.ds.desktop.service'"
         echo "视频目录: ~/Videos/video-wallpaper/"
         echo "设置: 桌面空白处右键 → 动态壁纸设置"

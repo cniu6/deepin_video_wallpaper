@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "videodecoder.h"
+#include "videoframe.h"
 
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QThread>
+#include <cstring>
+#include <algorithm>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -83,6 +86,13 @@ void VideoDecoder::setOptions(const DecodeOptions &opt)
 void VideoDecoder::requestStop()
 {
     stopFlag.store(true);
+}
+
+void VideoDecoder::releaseFrameSlot()
+{
+    int v = inFlight.fetch_sub(1, std::memory_order_acq_rel) - 1;
+    if (v < 0)
+        inFlight.store(0, std::memory_order_release);
 }
 
 bool VideoDecoder::playOne(const QString &path)
@@ -207,8 +217,10 @@ bool VideoDecoder::playOne(const QString &path)
             << "dst=" << dstW << "x" << dstH
             << "srcFps=" << srcFps
             << "targetFps=" << targetFps
+            << "cfgFps=" << opt.fps
             << "intervalUs=" << frameIntervalUs
-            << "speed=" << speed;
+            << "speed=" << speed
+            << (opt.fps <= 0.0 ? " FOLLOW_SOURCE" : " CAPPED");
 
     AVFrame *frame = av_frame_alloc();
     AVFrame *swFrame = av_frame_alloc();
@@ -231,22 +243,29 @@ bool VideoDecoder::playOne(const QString &path)
         }
     };
 
-    auto ensureSws = [&](enum AVPixelFormat srcFmt, int w, int h) -> bool {
-        if (sws && swsFmt == srcFmt && swsW == w && swsH == h)
+    // sws → BGRA/RGB32（嵌入桌面）
+    AVPixelFormat swsDstFmt = AV_PIX_FMT_NV12;
+    auto ensureSws = [&](enum AVPixelFormat srcFmt, int w, int h, AVPixelFormat dstFmt) -> bool {
+        if (sws && swsFmt == srcFmt && swsW == w && swsH == h && swsDstFmt == dstFmt)
             return true;
         if (sws) {
             sws_freeContext(sws);
             sws = nullptr;
         }
-        sws = sws_getContext(w, h, srcFmt, dstW, dstH, AV_PIX_FMT_BGRA,
+        sws = sws_getContext(w, h, srcFmt, dstW, dstH, dstFmt,
                              swsFlags(w, h), nullptr, nullptr, nullptr);
         if (!sws)
             return false;
         swsFmt = srcFmt;
         swsW = w;
         swsH = h;
+        swsDstFmt = dstFmt;
         return true;
     };
+
+    QImage buf[2];
+    int bufIdx = 0;
+    inFlight.store(0);
 
     QElapsedTimer timer;
     timer.start();
@@ -280,10 +299,22 @@ bool VideoDecoder::playOne(const QString &path)
 
         while (!stopFlag.load() && avcodec_receive_frame(ctx, frame) == 0) {
             const qint64 now = nowUs();
-            // 落后超过 1.5 帧：直接丢，不做 GPU 回传 / sws（卡顿主因）
             if (now > nextPtsUs + dropSlackUs) {
+                // 落后：丢帧；时钟对齐到下一拍，避免 nextPts=now 后连续再丢半秒
                 ++dropped;
-                nextPtsUs = now;
+                nextPtsUs += frameIntervalUs;
+                if (now > nextPtsUs + dropSlackUs)
+                    nextPtsUs = now;
+                continue;
+            }
+            if (inFlight.load(std::memory_order_acquire) >= kMaxInFlight) {
+                ++dropped;
+                nextPtsUs += frameIntervalUs;
+                const qint64 delayUs = nextPtsUs - nowUs();
+                if (delayUs > 500)
+                    QThread::usleep(static_cast<unsigned long>(qMin<qint64>(delayUs, 5000000)));
+                else if (delayUs < -frameIntervalUs * 2)
+                    nextPtsUs = nowUs();
                 continue;
             }
 
@@ -296,24 +327,45 @@ bool VideoDecoder::playOne(const QString &path)
 
             const int w = src->width > 0 ? src->width : srcW;
             const int h = src->height > 0 ? src->height : srcH;
-            if (!ensureSws(static_cast<AVPixelFormat>(src->format), w, h))
+            // 嵌入桌面架构：解码线程完成 transfer+sws→RGB32，主线程只贴图
+            const AVPixelFormat pf = static_cast<AVPixelFormat>(src->format);
+            if (!ensureSws(pf, w, h, AV_PIX_FMT_BGRA))
                 continue;
-
-            // 每帧独立 QImage：Queued 隐式共享安全；比「复用+detach 整帧拷」更稳
-            QImage img(dstW, dstH, QImage::Format_RGB32);
+            QImage img;
+            if (!buf[bufIdx].isNull()
+                && buf[bufIdx].width() == dstW && buf[bufIdx].height() == dstH
+                && buf[bufIdx].format() == QImage::Format_RGB32
+                && buf[bufIdx].isDetached()) {
+                img = buf[bufIdx];
+            } else {
+                img = QImage(dstW, dstH, QImage::Format_RGB32);
+                buf[bufIdx] = img;
+            }
+            bufIdx ^= 1;
             if (img.isNull())
                 continue;
             uint8_t *dstSlice[4] = { img.bits(), nullptr, nullptr, nullptr };
             int dstStride[4] = { int(img.bytesPerLine()), 0, 0, 0 };
             sws_scale(sws, src->data, src->linesize, 0, h, dstSlice, dstStride);
 
-            emit frameReady(img);
+            VideoFrame out;
+            out.format = VideoFrame::Format::Rgb32;
+            out.width = dstW;
+            out.height = dstH;
+            out.rgb = img;
+
+            if ((emitted % 180) == 0) {
+                qInfo() << "[videowallpaper] presentFmt RGB32-desktop"
+                        << out.width << "x" << out.height
+                        << "inFlight" << inFlight.load();
+            }
+            inFlight.fetch_add(1, std::memory_order_release);
+            emit frameReady(out);
             ++emitted;
 
             nextPtsUs += frameIntervalUs;
             const qint64 delayUs = nextPtsUs - nowUs();
             if (delayUs > 500) {
-                // usleep 比 msleep 更贴 60fps（16.667ms），少抖
                 QThread::usleep(static_cast<unsigned long>(qMin<qint64>(delayUs, 5000000)));
             } else if (delayUs < -frameIntervalUs * 2) {
                 nextPtsUs = nowUs();
@@ -338,6 +390,7 @@ bool VideoDecoder::playOne(const QString &path)
 void VideoDecoder::run()
 {
     stopFlag.store(false);
+    inFlight.store(0);
     while (!stopFlag.load()) {
         QList<QUrl> list;
         {

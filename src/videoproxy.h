@@ -4,23 +4,30 @@
 
 #include "ddplugin_videowallpaper_global.h"
 #include "wallpaperconfig.h"
+#include "videoframe.h"
 
 #include <QWidget>
 #include <QPixmap>
+#include <QImage>
 #include <QElapsedTimer>
 #include <QSharedPointer>
+#include <functional>
 
 namespace ddplugin_videowallpaper {
 
 struct PlayOptions {
-    DecodeMode mode = DecodeMode::Cuda;
+    DecodeMode mode = DecodeMode::Software;
     SmoothLevel smooth = SmoothLevel::Fast;
     FillMode fill = FillMode::Fill;
     double speed = 1.0;
-    double fps = 0.0;   // 0=跟片源；1~240
+    double fps = 0.0;
     int maxWidth = -1;
 };
 
+/**
+ * 嵌入桌面 root 的 QWidget（禁止 QOpenGLWidget / 独立窗）。
+ * 呈现用 QPixmap + drawPixmap：X11 上比每帧 drawImage 更贴合成路径。
+ */
 class VideoProxy : public QWidget
 {
     Q_OBJECT
@@ -30,9 +37,10 @@ public:
 
     void stop();
     void updateImage(const QImage &img);
-    /** 主线程已转好的 pixmap（多屏共享，避免每屏 fromImage 一次） */
-    void updatePixmap(const QPixmap &pm, int srcW, int srcH);
-    /** 仅刷新叠层（开关 showFps 时用，不必重解） */
+    /** 多屏共享同一 QPixmap（主线程只 fromImage 一次） */
+    void presentPixmap(const QPixmap &pm, int srcW, int srcH,
+                       const std::function<void()> &painted = {});
+    void present(const VideoFrame &frame, const std::function<void()> &painted = {});
     void refreshOverlay();
 
 protected:
@@ -40,7 +48,7 @@ protected:
 
 private:
     void drawFpsOverlay(QPainter &pa);
-    void notePresented(int srcW, int srcH);
+    void armPaint(int srcW, int srcH);
 
     QPixmap pixmap;
     QElapsedTimer paintGate;
@@ -50,6 +58,8 @@ private:
     double displayFps = 0.0;
     int lastFrameW = 0;
     int lastFrameH = 0;
+    bool paintScheduled = false;
+    std::function<void()> afterPaint;
 };
 
 typedef QSharedPointer<VideoProxy> VideoProxyPointer;

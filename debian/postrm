@@ -1,26 +1,14 @@
 #!/bin/sh
 set -e
-
-# 卸载后重启桌面，清掉已加载的插件映射
-restart_desktop() {
-    for uid in $(ls /run/user 2>/dev/null || true); do
-        [ -S "/run/user/$uid/bus" ] || continue
-        user=$(getent passwd "$uid" | cut -d: -f1)
-        [ -n "$user" ] || continue
-        su -s /bin/sh -c \
-            "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
-             systemctl --user start 'dde-shell-plugin@org.deepin.ds.desktop.service' 2>/dev/null" \
-            "$user" || true
-    done
-}
-
 case "$1" in
-    remove|purge)
-        restart_desktop || true
-        # purge 时可选清用户配置（默认保留，避免误删设置）
-        ;;
+  remove|purge)
+    for uid in $(ls /run/user 2>/dev/null || true); do
+      case "$uid" in *[!0-9]*) continue ;; esac
+      [ -S "/run/user/$uid/bus" ] || continue
+      user=$(getent passwd "$uid" | cut -d: -f1)
+      [ -n "$user" ] || continue
+      su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus timeout 5 systemctl --user start 'dde-shell-plugin@org.deepin.ds.desktop.service' >/dev/null 2>&1 || true" "$user" >/dev/null 2>&1 &
+    done
+    ;;
 esac
-
-#DEBHELPER#
-
 exit 0

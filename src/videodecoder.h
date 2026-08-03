@@ -3,9 +3,9 @@
 #define VIDEODECODER_H
 
 #include "wallpaperconfig.h"
+#include "videoframe.h"
 
 #include <QThread>
-#include <QImage>
 #include <QUrl>
 #include <QMutex>
 #include <QList>
@@ -14,36 +14,42 @@
 namespace ddplugin_videowallpaper {
 
 struct DecodeOptions {
-    int maxWidth = -1;         // -1=不降分辨率；0=上层会改成屏幕宽；>0=上限
-    double fps = 0.0;          // 0=跟片源
+    int maxWidth = -1;
+    double fps = 0.0;
     double speed = 1.0;
     DecodeMode mode = DecodeMode::Auto;
     SmoothLevel smooth = SmoothLevel::High;
+    bool preferNv12 = false;
 };
 
 class VideoDecoder : public QThread
 {
     Q_OBJECT
 public:
+    static constexpr int kMaxInFlight = 2;
+
     explicit VideoDecoder(QObject *parent = nullptr);
     ~VideoDecoder() override;
 
     void setPlaylist(const QList<QUrl> &list);
     void setOptions(const DecodeOptions &opt);
     void requestStop();
+    void releaseFrameSlot();
 
 signals:
-    void frameReady(const QImage &img);
+    void frameReady(const VideoFrame &frame);
 
 protected:
     void run() override;
 
 private:
     bool playOne(const QString &path);
+
     QList<QUrl> playlist;
     DecodeOptions options;
     QMutex mutex;
     std::atomic_bool stopFlag { false };
+    std::atomic_int inFlight { 0 };
 };
 
 }

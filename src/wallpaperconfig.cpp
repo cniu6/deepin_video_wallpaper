@@ -136,9 +136,9 @@ void WallpaperConfigPrivate::load()
         maxWidth = -1;
     if (maxWidth > 7680)
         maxWidth = 7680;
-    // 缺省：CUDA / 全分辨率 / 原始帧率 / 平滑关 / 铺满
+    // 缺省：软解（可在设置里随时切 CUDA/VAAPI/自动）
     decodeMode = WallpaperConfig::decodeModeFromString(
-            o.value(QStringLiteral("decodeMode")).toString(QStringLiteral("cuda")));
+            o.value(QStringLiteral("decodeMode")).toString(QStringLiteral("software")));
     smoothLevel = WallpaperConfig::smoothLevelFromString(
             o.value(QStringLiteral("smoothLevel")).toString(QStringLiteral("fast")));
     fillMode = WallpaperConfig::fillModeFromString(

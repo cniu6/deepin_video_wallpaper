@@ -51,6 +51,7 @@ private:
     QPushButton *clearBtn = nullptr;
     QGroupBox *optionBox = nullptr;
     QComboBox *decodeBox = nullptr;
+    QLabel *decodeTipLabel = nullptr;
     QComboBox *qualityBox = nullptr;
     QComboBox *fpsBox = nullptr;
     QComboBox *fillBox = nullptr;
@@ -58,6 +59,8 @@ private:
     QDoubleSpinBox *speedSpin = nullptr;
     QLabel *tipLabel = nullptr;
     bool loading = false;
+
+    void refreshDecodeTip();
 
     QHash<QString, ScreenSetting> screenMap;
 };

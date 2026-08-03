@@ -36,6 +36,8 @@ private slots:
     void catchImage(const QImage &img);
     void onOptionsChanged();
     void onConfigFileChanged(const QString &path);
+    void onSessionLockSignal();
+    void onScreenSaverActiveChanged(bool active);
 
 private:
     WallpaperEnginePrivate *d;

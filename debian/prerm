@@ -1,25 +1,15 @@
 #!/bin/sh
 set -e
-
-# 卸载前先停插件，避免 so 被占用
-stop_desktop() {
-    for uid in $(ls /run/user 2>/dev/null || true); do
-        [ -S "/run/user/$uid/bus" ] || continue
-        user=$(getent passwd "$uid" | cut -d: -f1)
-        [ -n "$user" ] || continue
-        su -s /bin/sh -c \
-            "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
-             systemctl --user stop 'dde-shell-plugin@org.deepin.ds.desktop.service' 2>/dev/null" \
-            "$user" || true
-    done
-}
-
+# 后台+超时，避免 dpkg 卡死
 case "$1" in
-    remove|upgrade|deconfigure)
-        stop_desktop || true
-        ;;
+  remove|upgrade|deconfigure)
+    for uid in $(ls /run/user 2>/dev/null || true); do
+      case "$uid" in *[!0-9]*) continue ;; esac
+      [ -S "/run/user/$uid/bus" ] || continue
+      user=$(getent passwd "$uid" | cut -d: -f1)
+      [ -n "$user" ] || continue
+      su -s /bin/sh -c "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus timeout 5 systemctl --user stop 'dde-shell-plugin@org.deepin.ds.desktop.service' >/dev/null 2>&1 || true" "$user" >/dev/null 2>&1 &
+    done
+    ;;
 esac
-
-#DEBHELPER#
-
 exit 0

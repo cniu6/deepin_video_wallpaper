@@ -9,6 +9,9 @@
 #include <QFileSystemWatcher>
 #include <QHash>
 #include <QUrl>
+#include <QTimer>
+
+class QDBusInterface;
 
 namespace ddplugin_videowallpaper {
 
@@ -32,16 +35,24 @@ public:
     void stopSharedDecoders();
     bool isScreenActive(const QString &screenName) const;
     PlayOptions playOptions() const;
+    /** 仅统计正在播放该 url 的屏控件物理宽，避免双屏被最大屏拖到无意义的超宽 sws */
+    int maxWidthForScreens(const QList<QString> &screens) const;
     int maxScreenWidth() const;
+
+    void setPlaybackSuspended(bool suspended, const char *reason);
+    void setupPowerHooks();
+    bool playbackSuspended = false;
+    bool sessionLocked = false;
+    bool screenSaverActive = false;
 
     QMap<QString, VideoProxyPointer> widgets;
     QHash<QString, QUrl> screenVideo;
-    // 同一视频只解一份，多屏共享帧
     QHash<QUrl, VideoDecoder *> decoders;
 
     QFileSystemWatcher *watcher = nullptr;
     QFileSystemWatcher *cfgWatcher = nullptr;
     QTimer *startDebounce = nullptr;
+    QTimer *visibilityTimer = nullptr;
 
 private:
     WallpaperEngine *q;
